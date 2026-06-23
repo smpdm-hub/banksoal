@@ -36,6 +36,26 @@ const fileToBase64 = (file) => new Promise((resolve, reject) => {
   reader.onerror = error => reject(error);
 });
 
+// Helper untuk melakukan GET ke GAS (mengatasi masalah cache & error response HTML)
+const getFromGas = async (action) => {
+  // Tambahkan timestamp agar browser selalu mengambil data terbaru (tidak kena cache)
+  const url = `${GAS_URL}?action=${action}&t=${Date.now()}`;
+  const res = await fetch(url, { 
+    method: 'GET', 
+    redirect: 'follow' 
+  });
+  
+  if (!res.ok) throw new Error(`HTTP Error: ${res.status}`);
+  
+  const text = await res.text();
+  try {
+    return JSON.parse(text);
+  } catch (err) {
+    // Menampilkan potongan teks jika GAS ternyata membalas dengan pesan Error HTML
+    throw new Error(`Respon GAS tidak valid: ${text.substring(0, 30)}...`);
+  }
+};
+
 // Helper untuk melakukan POST ke Google Apps Script tanpa memicu CORS Preflight (OPTIONS)
 const postToGas = async (payload) => {
   const res = await fetch(GAS_URL, {
@@ -369,11 +389,10 @@ const GalleryView = () => {
       if (!GAS_URL) return;
       dispatch({ type: 'SET_LOADING_DATA', payload: true });
       try {
-        const res = await fetch(`${GAS_URL}?action=getData`);
-        const data = await res.json();
+        const data = await getFromGas('getData');
         dispatch({ type: 'SET_DATA', payload: data });
       } catch (error) {
-        dispatch({ type: 'SHOW_TOAST', payload: { message: "Gagal memuat data galeri", type: "error" } });
+        dispatch({ type: 'SHOW_TOAST', payload: { message: `Gagal memuat galeri: ${error.message}`, type: "error" } });
       } finally {
         dispatch({ type: 'SET_LOADING_DATA', payload: false });
       }
@@ -458,11 +477,10 @@ const AdminView = () => {
     const fetchUsers = async () => {
       if (!GAS_URL) return;
       try {
-        const res = await fetch(`${GAS_URL}?action=getUsers`);
-        const data = await res.json();
+        const data = await getFromGas('getUsers');
         dispatch({ type: 'SET_USERS', payload: data.users || [] });
       } catch (error) {
-        console.error(error);
+        dispatch({ type: 'SHOW_TOAST', payload: { message: `Gagal memuat pengguna: ${error.message}`, type: "error" } });
       }
     };
     fetchUsers();
@@ -477,8 +495,7 @@ const AdminView = () => {
         dispatch({ type: 'SHOW_TOAST', payload: { message: "Pengguna berhasil disimpan", type: "success" } });
         setNewUser({ username: '', password: '', role: 'gtk' });
         // Refresh users
-        const resUsers = await fetch(`${GAS_URL}?action=getUsers`);
-        const dataUsers = await resUsers.json();
+        const dataUsers = await getFromGas('getUsers');
         dispatch({ type: 'SET_USERS', payload: dataUsers.users || [] });
       } else { throw new Error("Gagal menyimpan pengguna"); }
     } catch (error) {
