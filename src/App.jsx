@@ -193,7 +193,7 @@ const LoginView = () => {
     <div className="min-h-screen flex items-center justify-center bg-slate-100 p-4">
       <div className="bg-white p-8 rounded-2xl shadow-xl max-w-md w-full border border-slate-100">
         <div className="flex justify-center mb-6"><div className="bg-blue-100 p-3 rounded-full"><HardDrive className="w-8 h-8 text-blue-600" /></div></div>
-        <h1 className="text-2xl font-bold text-center text-slate-800 mb-2">Portal Terpadu Sekolah</h1>
+        <h1 className="text-2xl font-bold text-center text-slate-800 mb-2">Portal Terpadu SMP DARUL MADINAH</h1>
         <p className="text-center text-slate-500 mb-8 text-sm">Masuk untuk mengakses sistem sekolah</p>
         <form onSubmit={handleLogin} className="space-y-4">
           <div>
