@@ -36,7 +36,7 @@ const fileToBase64 = (file) => new Promise((resolve, reject) => {
 });
 
 // ==========================================
-// 2. FUNGSI FETCH ANTI-CORS & PROGRESS
+// 2. FUNGSI FETCH ANTI-CORS (STABIL TANPA REDIRECT BUG)
 // ==========================================
 const getFromGas = async (action) => {
   try {
@@ -50,35 +50,15 @@ const getFromGas = async (action) => {
 
 const postToGas = async (payload) => {
   try {
-    const res = await fetch(GAS_URL, { method: 'POST', body: JSON.stringify(payload) });
+    const res = await fetch(GAS_URL, { 
+      method: 'POST', 
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify(payload) 
+    });
     if (!res.ok) throw new Error(`HTTP Error: ${res.status}`);
     const text = await res.text();
     try { return JSON.parse(text); } catch (err) { throw new Error("Format respons bukan JSON valid."); }
   } catch (error) { throw new Error("Koneksi diblokir oleh Google."); }
-};
-
-// XHR Helper untuk mendeteksi persentase unggahan (Progress Bar)
-const xhrPostToGas = (payload, onProgress) => {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open('POST', GAS_URL, true);
-    if (xhr.upload && onProgress) {
-      xhr.upload.onprogress = (e) => {
-        if (e.lengthComputable) {
-          const percent = Math.round((e.loaded / e.total) * 100);
-          onProgress(percent > 95 ? 95 : percent); // Berhenti di 95% sampai server merespons sukses
-        }
-      };
-    }
-    xhr.onload = () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        if (onProgress) onProgress(100);
-        try { resolve(JSON.parse(xhr.responseText)); } catch (err) { reject(new Error("Format respons tidak valid.")); }
-      } else { reject(new Error(`HTTP Error: ${xhr.status}`)); }
-    };
-    xhr.onerror = () => reject(new Error("Koneksi gagal. Cek jaringan/akses."));
-    xhr.send(JSON.stringify(payload));
-  });
 };
 
 // ==========================================
@@ -226,7 +206,7 @@ const LoginView = () => {
             <input required type="password" className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
               value={formData.password} onChange={e => setFormData({ ...formData, password: e.target.value })} />
           </div>
-          <button disabled={loading} type="submit" className="w-full bg-blue-600 text-white font-medium py-2 rounded-lg hover:bg-blue-700 flex justify-center items-center gap-2">
+          <button disabled={loading} type="submit" className="w-full bg-blue-600 text-white font-bold py-2 rounded-lg hover:bg-blue-700 flex justify-center items-center gap-2">
             {loading ? <Spinner /> : 'Masuk'}
           </button>
         </form>
@@ -236,7 +216,7 @@ const LoginView = () => {
 };
 
 // ==========================================
-// 6. UPLOAD DOKUMENTASI VIEW
+// 6. UPLOAD DOKUMENTASI VIEW (ANTI-CORS COLD BOOT)
 // ==========================================
 const UploadFotoView = () => {
   const { state, dispatch } = useContext(AppContext);
@@ -264,23 +244,35 @@ const UploadFotoView = () => {
     if (pendingItems.length === 0) return;
 
     for (const item of pendingItems) {
-      dispatch({ type: 'UPDATE_QUEUE_ITEM', payload: { id: item.id, updates: { status: 'uploading', progress: 5 } } });
+      dispatch({ type: 'UPDATE_QUEUE_ITEM', payload: { id: item.id, updates: { status: 'uploading', progress: 10 } } });
+      
+      // Simulasi progress bar berjalan halus di browser
+      const interval = setInterval(() => {
+         dispatch({ type: 'UPDATE_QUEUE_ITEM', payload: { id: item.id, updates: { 
+           progress: Math.min(90, Math.floor(Math.random() * 10) + 10) 
+         }} });
+      }, 500);
+
       try {
         const base64Data = await fileToBase64(item.originalFile);
-        dispatch({ type: 'UPDATE_QUEUE_ITEM', payload: { id: item.id, updates: { progress: 15 } } });
-
-        const data = await xhrPostToGas({
-          action: 'upload', activityTitle: item.title, activityDate: item.date, fileName: item.name, mimeType: item.originalFile.type, fileData: base64Data
-        }, (percent) => {
-          const realPercent = 15 + Math.floor(percent * 0.85); // Sisanya 85% untuk upload jaringan
-          dispatch({ type: 'UPDATE_QUEUE_ITEM', payload: { id: item.id, updates: { progress: realPercent } } });
+        const data = await postToGas({ 
+          action: 'upload', 
+          activityTitle: item.title, 
+          activityDate: item.date, 
+          fileName: item.name, 
+          mimeType: item.originalFile.type, 
+          fileData: base64Data 
         });
-
+        
+        clearInterval(interval);
         if (data.status === 'success') {
           dispatch({ type: 'UPDATE_QUEUE_ITEM', payload: { id: item.id, updates: { status: 'success', progress: 100 } } });
+          dispatch({ type: 'SHOW_TOAST', payload: { message: "Dokumentasi berhasil diunggah!", type: "success" } });
         } else throw new Error(data.message || "Gagal");
       } catch (error) {
+        clearInterval(interval);
         dispatch({ type: 'UPDATE_QUEUE_ITEM', payload: { id: item.id, updates: { status: 'error', progress: 0 } } });
+        dispatch({ type: 'SHOW_TOAST', payload: { message: error.message, type: "error" } });
       }
     }
   };
@@ -291,7 +283,7 @@ const UploadFotoView = () => {
   return (
     <div className="max-w-4xl mx-auto space-y-6">
       <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
-        <h2 className="text-xl font-bold text-slate-800 mb-4 flex items-center gap-2 text-blue-600"><UploadCloud className="w-6 h-6" /> Unggah Foto Kegiatan</h2>
+        <h2 className="text-xl font-bold text-slate-800 mb-4 flex items-center gap-2 text-blue-600"><UploadCloud className="w-6 h-6" /> Unggah Foto Kegiatan (Susulan Otomatis)</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-1">Judul Kegiatan</label>
@@ -311,12 +303,10 @@ const UploadFotoView = () => {
         </div>
       </div>
 
-      {/* Upload Queue Panel */}
       {state.uploadQueue.filter(i => !i.isBankSoal).length > 0 && (
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
           <div className="flex justify-between items-center mb-4">
              <h3 className="text-lg font-bold text-slate-800">Antrean Unggah Foto</h3>
-             <span className="text-xs font-semibold text-blue-600 bg-blue-50 px-3 py-1 rounded-full">{state.uploadQueue.filter(i => !i.isBankSoal).length} Berkas</span>
           </div>
           <div className="space-y-3 mb-4 max-h-[40vh] overflow-y-auto pr-2 custom-scroll">
             {state.uploadQueue.filter(i => !i.isBankSoal).map(item => (
@@ -326,7 +316,6 @@ const UploadFotoView = () => {
                   <div className="flex-1 min-w-0 pr-4">
                     <p className="text-sm font-semibold truncate text-slate-800">{item.name}</p>
                     <p className="text-xs text-slate-500">{item.size}</p>
-                    {/* Progress Bar */}
                     {(item.status === 'uploading' || item.status === 'success') && (
                       <div className="w-full bg-slate-200 rounded-full h-1.5 mt-2 overflow-hidden">
                         <div className={`h-1.5 rounded-full transition-all duration-300 ${item.status === 'success' ? 'bg-emerald-500' : 'bg-blue-500'}`} style={{width: `${item.progress || 0}%`}}></div>
@@ -344,9 +333,8 @@ const UploadFotoView = () => {
             ))}
           </div>
           
-          {/* Tombol Mulai Unggah (Mewajibkan klik manual) */}
           {pendingFiles.length > 0 && (
-             <button onClick={handleStartUpload} disabled={isUploading} className="w-full bg-blue-600 text-white font-bold py-3.5 rounded-xl hover:bg-blue-700 flex justify-center items-center gap-2 shadow-md transition disabled:opacity-70 disabled:cursor-not-allowed">
+             <button onClick={handleStartUpload} disabled={isUploading} className="w-full bg-blue-600 text-white font-bold py-3.5 rounded-xl hover:bg-blue-700 flex justify-center items-center gap-2 shadow-md transition disabled:opacity-70">
                {isUploading ? <Spinner className="w-5 h-5 text-white" /> : <UploadCloud className="w-5 h-5" />}
                {isUploading ? 'Sedang Memproses Unggahan...' : `Mulai Unggah ${pendingFiles.length} Foto Sekarang`}
              </button>
@@ -358,7 +346,7 @@ const UploadFotoView = () => {
 };
 
 // ==========================================
-// 7. UPLOAD BANK SOAL VIEW (DINAMIS & AMAN)
+// 7. UPLOAD BANK SOAL VIEW (ANTI-GANDA & SUSULAN)
 // ==========================================
 const UploadSoalView = () => {
   const { state, dispatch } = useContext(AppContext);
@@ -371,22 +359,27 @@ const UploadSoalView = () => {
   const [checklist, setChecklist] = useState({ kisi: false, naskah: false, kunci: false });
   const fileInputRef = useRef(null);
   
-  // Ambil Data Terkini Saat Pertama Dibuka (Untuk validasi file ganda)
+  // Ambil data bank soal terbaru dari server saat menu dibuka
   useEffect(() => {
-    getFromGas('getBankSoal').then(data => dispatch({ type: 'SET_BANK_SOAL', payload: data })).catch(()=>null);
+    getFromGas('getBankSoal')
+      .then(data => dispatch({ type: 'SET_BANK_SOAL', payload: data }))
+      .catch(()=>null);
   }, [dispatch]);
 
-  // Logika Pemeriksaan Naskah yang Sudah Ada
+  // Logika Pemeriksaan File Ganda & Exists
   const actTitle = `${form.tahun.replace(/\//g, '-')}_${form.semester}_${form.ujian}`;
   const actDate = form.mapel && form.kelas ? `${form.mapel.replace(/[^a-zA-Z0-9]/g, '_')}_${form.kelas}` : '';
   const idMapelKelas = `${actTitle}_${actDate}`;
   
   let hasExistingFile = false;
+  let currentLink = '';
   if (actDate) {
     const existingFolder = state.bankSoalActivities.find(a => a.title === actTitle && a.date === actDate);
     if (existingFolder && state.bankSoalFiles.some(f => f.activityId === existingFolder.id)) {
       hasExistingFile = true;
     }
+    const matchLink = state.examLinks.find(l => l.id === idMapelKelas);
+    if (matchLink) currentLink = matchLink.url;
   }
 
   const isChecklistComplete = checklist.kisi && checklist.naskah && checklist.kunci;
@@ -414,32 +407,42 @@ const UploadSoalView = () => {
     if (pendingItems.length === 0) return;
 
     for (const item of pendingItems) {
-      dispatch({ type: 'UPDATE_QUEUE_ITEM', payload: { id: item.id, updates: { status: 'uploading', progress: 5 } } });
+      dispatch({ type: 'UPDATE_QUEUE_ITEM', payload: { id: item.id, updates: { status: 'uploading', progress: 10 } } });
+      
+      const interval = setInterval(() => {
+         dispatch({ type: 'UPDATE_QUEUE_ITEM', payload: { id: item.id, updates: { 
+           progress: Math.min(90, Math.floor(Math.random() * 10) + 10) 
+         }} });
+      }, 500);
+
       try {
         const base64Data = await fileToBase64(item.originalFile);
-        dispatch({ type: 'UPDATE_QUEUE_ITEM', payload: { id: item.id, updates: { progress: 15 } } });
-
-        const data = await xhrPostToGas({
+        const data = await postToGas({
           action: 'uploadBankSoal', activityTitle: item.title, activityDate: item.date, fileName: item.name, mimeType: item.originalFile.type, fileData: base64Data
-        }, (percent) => {
-          const realPercent = 15 + Math.floor(percent * 0.85);
-          dispatch({ type: 'UPDATE_QUEUE_ITEM', payload: { id: item.id, updates: { progress: realPercent } } });
         });
+
+        clearInterval(interval);
 
         if (data.status === 'success') {
           dispatch({ type: 'UPDATE_QUEUE_ITEM', payload: { id: item.id, updates: { status: 'success', progress: 100 } } });
-          // Jika sekalian isi link, simpan link
+          
           if (form.link) {
             await postToGas({ action: 'saveExamLink', idMapelKelas: idMapelKelas, linkUrl: form.link });
-            dispatch({ type: 'SHOW_TOAST', payload: { message: "Naskah & Link berhasil diunggah!", type: "success" } });
+            dispatch({ type: 'SHOW_TOAST', payload: { message: "Naskah & Link berhasil disimpan!", type: "success" } });
           } else {
             dispatch({ type: 'SHOW_TOAST', payload: { message: "Naskah berhasil diunggah!", type: "success" } });
           }
-          // Segarkan data server
-          getFromGas('getBankSoal').then(res => dispatch({ type: 'SET_BANK_SOAL', payload: res }));
+          
+          // Reset form & reload data
+          setForm({ ...form, link: '' });
+          setChecklist({ kisi: false, naskah: false, kunci: false });
+          const refresh = await getFromGas('getBankSoal');
+          dispatch({ type: 'SET_BANK_SOAL', payload: refresh });
         } else throw new Error(data.message || "Gagal");
       } catch (error) {
+        clearInterval(interval);
         dispatch({ type: 'UPDATE_QUEUE_ITEM', payload: { id: item.id, updates: { status: 'error', progress: 0 } } });
+        dispatch({ type: 'SHOW_TOAST', payload: { message: error.message, type: "error" } });
       }
     }
   };
@@ -450,7 +453,7 @@ const UploadSoalView = () => {
     try {
       const data = await postToGas({ action: 'saveExamLink', idMapelKelas: idMapelKelas, linkUrl: form.link });
       if (data.status === 'success') {
-         dispatch({ type: 'SHOW_TOAST', payload: { message: "Link Susulan berhasil disimpan!", type: "success" } });
+         dispatch({ type: 'SHOW_TOAST', payload: { message: "Link ujian berhasil diperbarui!", type: "success" } });
          setForm({...form, link: ''});
          const refresh = await getFromGas('getBankSoal');
          dispatch({ type: 'SET_BANK_SOAL', payload: refresh });
@@ -468,9 +471,9 @@ const UploadSoalView = () => {
   return (
     <div className="max-w-4xl mx-auto space-y-6">
       <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
-        <h2 className="text-xl font-bold text-slate-800 mb-4 flex items-center gap-2 text-indigo-600"><BookOpen className="w-6 h-6" /> Unggah Naskah Ujian & Link</h2>
+        <h2 className="text-xl font-bold text-slate-800 mb-4 flex items-center gap-2 text-indigo-600"><BookOpen className="w-6 h-6" /> Unggah Naskah Ujian & Link Online</h2>
         
-        {/* Dropdown Meta Data */}
+        {/* Dropdown Pilihan */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-1">Tahun Pelajaran</label>
@@ -508,68 +511,67 @@ const UploadSoalView = () => {
           </div>
         </div>
 
-        {/* Form Link Opsional / Susulan */}
+        {/* Input Link (Opsi Susulan / Update) */}
         <div className="mb-6 border-b border-slate-100 pb-6">
-           <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center gap-1"><LinkIcon className="w-4 h-4"/> Link Ujian Online (Opsional / Susulan)</label>
+           <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center gap-1"><LinkIcon className="w-4 h-4 text-purple-500"/> Link Ujian Online (Google Form / CBT - Opsional)</label>
            <div className="flex gap-2">
-             <input type="url" placeholder="https://forms.gle/..." className="w-full px-4 py-2 border border-slate-300 rounded-lg outline-none focus:border-indigo-500 disabled:bg-slate-100" 
+             <input type="url" placeholder={currentLink ? `Link tersimpan: ${currentLink}` : "https://forms.gle/..."} className="w-full px-4 py-2 border border-slate-300 rounded-lg outline-none focus:border-indigo-500 disabled:bg-slate-100" 
                 value={form.link} onChange={e => setForm({...form, link: e.target.value})} disabled={!isSetupComplete} />
              
-             {/* Tombol Susulan Muncul Jika File Naskah Sudah Ada Sebelumnya */}
              {hasExistingFile && (
-               <button onClick={handleOnlySaveLink} disabled={!form.link} className="bg-purple-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-purple-700 disabled:opacity-50 whitespace-nowrap shadow-sm">
-                 Susulkan Link
+               <button onClick={handleOnlySaveLink} disabled={!form.link} className="bg-purple-600 text-white px-5 py-2 rounded-lg font-bold hover:bg-purple-700 disabled:opacity-50 whitespace-nowrap shadow-md transition">
+                 Simpan / Update Link
                </button>
              )}
            </div>
-           <p className="text-xs text-slate-500 mt-1">Anda dapat mengisi link sekarang, atau menyusulkannya nanti.</p>
+           {currentLink && <p className="text-xs text-emerald-600 font-semibold mt-1">✓ Link sudah terdaftar di server.</p>}
         </div>
 
-        {/* LOGIKA PENCEGAH FILE GANDA */}
+        {/* PENANGANAN FILE GANDA */}
         {hasExistingFile ? (
            <div className="p-6 bg-amber-50 border border-amber-200 rounded-2xl text-center">
              <CheckCircle className="w-12 h-12 text-emerald-500 mx-auto mb-3" />
-             <h3 className="text-lg font-bold text-amber-900 mb-1">Naskah Sudah Terunggah</h3>
-             <p className="text-amber-800 text-sm mb-3">Naskah file ujian untuk Mata Pelajaran & Kelas ini sudah tersimpan di server. <b>Anda tidak dapat mengunggah file ganda.</b></p>
-             <p className="text-xs text-amber-700">Jika naskah lama keliru dan ingin direvisi, silakan minta Admin untuk menghapus file lama di menu <b>Arsip Soal</b> terlebih dahulu.</p>
+             <h3 className="text-lg font-bold text-amber-900 mb-1">Berkas Naskah Soal Terdeteksi</h3>
+             <p className="text-amber-800 text-sm mb-3">Naskah untuk Mata Pelajaran & Kelas ini <b>sudah diunggah sebelumnya</b>. Anda hanya diperbolehkan meng-update tautan link ujian online di atas.</p>
+             <p className="text-xs text-amber-600">Jika file naskah lama salah dan perlu diganti baru, silakan minta Admin untuk menghapusnya lewat menu <b>Arsip Soal</b>.</p>
            </div>
         ) : !isSetupComplete ? (
-           <div className="p-8 bg-slate-50 border border-slate-200 rounded-2xl text-center text-slate-500 font-medium">
-             Silakan lengkapi Mata Pelajaran dan Kelas di atas terlebih dahulu.
+           <div className="p-8 bg-slate-50 border rounded-2xl text-center text-slate-400 font-medium">
+             Lengkapi pilihan Mata Pelajaran dan Kelas untuk memunculkan syarat checklist & area unggah.
            </div>
         ) : (
            <>
-             {/* Checklist Kelengkapan */}
+             {/* Syarat Checklist */}
              <div className="mb-6 p-4 bg-indigo-50/50 border border-indigo-100 rounded-xl">
-               <label className="block text-sm font-bold text-slate-800 mb-3">Daftar Periksa Persyaratan (Wajib dicentang)</label>
+               <label className="block text-sm font-bold text-slate-800 mb-3">Checklist Kelengkapan (Wajib Dicentang)</label>
                <div className="space-y-2">
                  {Object.keys(checklist).map((key) => (
                     <label key={key} className={`flex items-center gap-3 p-2.5 rounded-lg cursor-pointer transition-colors ${checklist[key] ? 'bg-indigo-100' : 'bg-white hover:bg-slate-50 border border-slate-200'}`}>
                       <input type="checkbox" className="w-5 h-5 text-indigo-600 rounded border-slate-300" checked={checklist[key]} onChange={(e) => setChecklist({...checklist, [key]: e.target.checked})} />
                       <span className={`text-sm font-semibold ${checklist[key] ? 'text-indigo-800' : 'text-slate-600'}`}>
-                        {key === 'kisi' ? '1. Kisi-kisi Ujian Telah Selesai & Divalidasi' : key === 'naskah' ? '2. Naskah Soal Sesuai Kaidah & Bebas SARA' : '3. Kunci Jawaban & Pedoman Penskoran Telah Tersedia'}
+                        {key === 'kisi' ? '1. Kisi-kisi Ujian Telah Selesai & Divalidasi Kurikulum' : key === 'naskah' ? '2. Naskah Soal Sesuai Kaidah Akademik & Bebas SARA' : '3. Kunci Jawaban & Panduan Skor Ujian Tersedia'}
                       </span>
                     </label>
                  ))}
                </div>
              </div>
 
-             {/* Area Drag & Drop */}
-             <div className={`border-2 border-dashed rounded-2xl p-10 text-center transition ${!isChecklistComplete ? 'border-slate-300 bg-slate-100 opacity-60 cursor-not-allowed' : 'border-indigo-500 bg-indigo-50 hover:bg-indigo-100'}`}
+             {/* Area Seret & Pilih File */}
+             <div className={`border-2 border-dashed rounded-2xl p-10 text-center transition ${!isChecklistComplete ? 'border-slate-300 bg-slate-100 opacity-60 cursor-not-allowed' : 'border-indigo-500 bg-indigo-50/50 hover:bg-indigo-50'}`}
                onDragOver={e => e.preventDefault()} 
-               onDrop={e => { e.preventDefault(); if(isChecklistComplete) processFiles(e.dataTransfer.files); else dispatch({ type: 'SHOW_TOAST', payload: { message: "Centang 3 persyaratan di atas!", type: "warning" } }); }}>
+               onDrop={e => { e.preventDefault(); if(isChecklistComplete) processFiles(e.dataTransfer.files); }}>
                <UploadCloud className={`w-12 h-12 mx-auto mb-3 ${!isChecklistComplete ? 'text-slate-400' : 'text-indigo-500'}`} />
                <p className={`font-semibold mb-2 ${!isChecklistComplete ? 'text-slate-500' : 'text-indigo-700'}`}>
-                 {!isChecklistComplete ? 'Akses Terkunci. Centang syarat di atas.' : 'Tarik & Lepas Naskah Soal (PDF/Word) ke sini'}
+                 {!isChecklistComplete ? 'Selesaikan checklist untuk mengunci berkas naskah' : 'Seret & Lepas berkas naskah (PDF/Word) ke sini'}
                </p>
                <input type="file" multiple className="hidden" ref={fileInputRef} onChange={e => processFiles(e.target.files)} disabled={!isChecklistComplete} />
-               <button onClick={() => fileInputRef.current.click()} disabled={!isChecklistComplete} className="bg-white border border-slate-300 px-6 py-2 rounded-lg text-sm font-bold shadow-sm disabled:opacity-50 text-slate-700 mt-2">Pilih File Naskah</button>
+               <button onClick={() => fileInputRef.current.click()} disabled={!isChecklistComplete} className="bg-white border px-6 py-2.5 rounded-lg text-sm font-bold shadow-sm disabled:opacity-50 text-slate-700 mt-2 hover:bg-slate-50">Pilih Berkas Naskah</button>
              </div>
            </>
         )}
       </div>
 
-      {/* Upload Queue Panel (Untuk File) */}
+      {/* Daftar Antrean Naskah */}
       {state.uploadQueue.filter(i => i.isBankSoal).length > 0 && (
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 mt-6">
           <div className="flex justify-between items-center mb-4">
@@ -600,11 +602,10 @@ const UploadSoalView = () => {
             ))}
           </div>
 
-          {/* Tombol Mulai Unggah */}
           {pendingFiles.length > 0 && (
              <button onClick={handleStartUpload} disabled={isUploading} className="w-full bg-indigo-600 text-white font-bold py-3.5 rounded-xl hover:bg-indigo-700 flex justify-center items-center gap-2 shadow-md transition disabled:opacity-70">
                {isUploading ? <Spinner className="w-5 h-5 text-white" /> : <UploadCloud className="w-5 h-5" />}
-               {isUploading ? 'Sedang Memproses Unggahan...' : `Mulai Unggah Naskah ${form.link ? '& Simpan Link' : ''}`}
+               {isUploading ? 'Sedang Memproses...' : `Mulai Unggah ${pendingFiles.length} Berkas Naskah Sekarang`}
              </button>
           )}
         </div>
@@ -649,8 +650,8 @@ const GaleriFotoView = () => {
   return (
     <div className="max-w-6xl mx-auto space-y-6">
       <h2 className="text-2xl font-bold text-slate-800">
-        {selectedFolder ? <button onClick={() => setSelectedFolder(null)} className="text-blue-600">Galeri</button> : 'Galeri Dokumentasi Foto'}
-        {selectedFolder && <span className="mx-2">/</span>}{selectedFolder?.title}
+        {selectedFolder ? <button onClick={() => setSelectedFolder(null)} className="text-blue-600 font-bold hover:underline">← Kembali</button> : 'Galeri Dokumentasi Foto'}
+        {selectedFolder && <span className="mx-2 text-slate-400">/</span>}{selectedFolder?.title}
       </h2>
       {!selectedFolder ? (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -730,7 +731,7 @@ const ArsipSoalView = () => {
                   </td>
                   <td className="py-3 px-4">
                     <div className="flex items-start justify-between gap-2">
-                      <div><span className="font-semibold block">{info.title}</span><span className="text-xs text-slate-500">{info.date}</span></div>
+                      <div><span className="font-semibold block text-slate-800">{info.title}</span><span className="text-xs text-slate-500">{info.date}</span></div>
                       {state.user.role === 'admin' && info.id && (
                         <button onClick={() => handleDelete(info.id, 'folder')} title="Hapus Mapel Ini" className="text-red-400 hover:text-red-600 p-1 bg-red-50 rounded opacity-0 group-hover:opacity-100 transition"><Trash2 className="w-3.5 h-3.5" /></button>
                       )}
@@ -803,11 +804,11 @@ const PantauSoalView = () => {
                       <div className="flex flex-col items-center gap-1.5">
                         <div className="flex items-center gap-1" title="Status Naskah File">
                            <FileText className={`w-3.5 h-3.5 ${status.hasFile ? 'text-indigo-500' : 'text-slate-300'}`}/>
-                           {status.hasFile ? <CheckCircle className="w-4 h-4 text-emerald-500" /> : <XCircle className="w-4 h-4 text-red-300" />}
+                           {status.hasFile ? <CheckCircle className="w-4.5 h-4.5 text-emerald-500 mx-auto" /> : <XCircle className="w-4.5 h-4.5 text-red-300 mx-auto" />}
                         </div>
                         <div className="flex items-center gap-1" title="Status Link Online">
                            <LinkIcon className={`w-3.5 h-3.5 ${status.hasLink ? 'text-purple-500' : 'text-slate-300'}`}/>
-                           {status.hasLink ? <CheckCircle className="w-4 h-4 text-emerald-500" /> : <XCircle className="w-4 h-4 text-red-300" />}
+                           {status.hasLink ? <CheckCircle className="w-4.5 h-4.5 text-emerald-500 mx-auto" /> : <XCircle className="w-4.5 h-4.5 text-red-300 mx-auto" />}
                         </div>
                       </div>
                     </td>
